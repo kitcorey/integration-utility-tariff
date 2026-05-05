@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import aiohttp
 import aiofiles
 import holidays as holidays_lib
+from holidays.countries import UnitedStates
 import PyPDF2
 from io import BytesIO
 
@@ -22,6 +23,37 @@ from . import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class _XcelColoradoHolidays(UnitedStates):
+    """US federal holidays as observed for Xcel Colorado TOU billing.
+
+    Per the Xcel CO tariff, the observed holidays are the US federal set
+    with one Colorado-specific swap: Columbus Day is replaced by Frances
+    Xavier Cabrini Day (the first Monday of October), which became a
+    Colorado state holiday in 2020.
+
+    The library's built-in ``subdiv="CO"`` set is close but adds Cesar
+    Chavez Day, which Xcel does NOT observe; we therefore start from the
+    federal set and apply only the Cabrini swap.
+    """
+
+    def _populate(self, year):
+        super()._populate(year)
+        # Drop Columbus Day (federal observance) — Xcel CO does not honor it.
+        for d in list(self.keys()):
+            if "Columbus Day" in self.get(d, ""):
+                del self[d]
+        # Add Frances Xavier Cabrini Day: 1st Monday of October, CO 2020+.
+        if year >= 2020:
+            d = date(year, 10, 1)
+            while d.weekday() != 0:  # 0 == Monday
+                d = d.replace(day=d.day + 1)
+            self[d] = "Frances Xavier Cabrini Day"
+
+
+# Module-level singleton; the holidays package lazy-populates years on demand.
+_XCEL_CO_HOLIDAYS = _XcelColoradoHolidays()
 
 
 class XcelEnergyPDFExtractor(ProviderDataExtractor):
@@ -813,15 +845,22 @@ class XcelEnergyRateCalculator(ProviderRateCalculator):
         return time.month in months
     
     def is_holiday(self, date: date, holiday_config: Dict[str, Any]) -> bool:
-        """Check if date is a US federal holiday (Xcel Energy uses these).
+        """Check if date is a holiday Xcel Energy observes for Colorado TOU.
 
-        Uses the `holidays` library's US federal holiday set, which handles
-        observation rules (e.g., Jan 1 falling on a Sunday observed Monday).
-        The `holiday_config` parameter is retained for backwards compatibility
-        but is not currently used.
+        Uses the US federal holiday set with one Colorado-specific swap:
+        Columbus Day is replaced by Frances Xavier Cabrini Day (1st Monday
+        of October). Observation rules (e.g., Jul 4 on a Saturday observed
+        Friday) are handled by the underlying ``holidays`` library.
+
+        The 11 holidays Xcel CO observes per the tariff are: New Year's
+        Day, MLK Jr. Day, Presidents Day, Memorial Day, Juneteenth,
+        Independence Day, Labor Day, Cabrini Day, Veterans Day,
+        Thanksgiving, and Christmas.
+
+        The ``holiday_config`` parameter is retained for backwards
+        compatibility but is not currently used.
         """
-        us_holidays = holidays_lib.country_holidays("US")
-        return date in us_holidays
+        return date in _XCEL_CO_HOLIDAYS
     
     def get_all_current_rates(self, time: datetime, tariff_data: Dict[str, Any]) -> Dict[str, Any]:
         """Get all current Xcel Energy rates and charges."""
