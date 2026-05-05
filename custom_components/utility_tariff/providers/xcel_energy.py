@@ -10,6 +10,7 @@ from datetime import datetime, date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 import aiohttp
 import aiofiles
+import holidays as holidays_lib
 import PyPDF2
 from io import BytesIO
 
@@ -789,14 +790,14 @@ class XcelEnergyRateCalculator(ProviderRateCalculator):
         # Check if weekend or holiday
         if time.weekday() >= 5 or self.is_holiday(time.date(), {}):
             return "Off-Peak"
-        
-        # Xcel Energy TOU schedule (simplified)
+
+        # Xcel CO TOU schedule (effective 2025-11-01 per CO PUC):
+        # Peak 5 PM - 9 PM weekdays year-round, off-peak otherwise.
+        # No shoulder period under the current schedule.
         hour = time.hour
-        
-        if 15 <= hour < 19:  # 3 PM - 7 PM
+
+        if 17 <= hour < 21:  # 5 PM - 9 PM
             return "Peak"
-        elif 13 <= hour < 15:  # 1 PM - 3 PM
-            return "Shoulder"
         else:
             return "Off-Peak"
     
@@ -812,15 +813,15 @@ class XcelEnergyRateCalculator(ProviderRateCalculator):
         return time.month in months
     
     def is_holiday(self, date: date, holiday_config: Dict[str, Any]) -> bool:
-        """Check if date is a US federal holiday (Xcel Energy uses these)."""
-        # Simplified holiday check - in practice would use a holiday library
-        federal_holidays = {
-            (1, 1): "New Year's Day",
-            (7, 4): "Independence Day", 
-            (12, 25): "Christmas Day"
-        }
-        
-        return (date.month, date.day) in federal_holidays
+        """Check if date is a US federal holiday (Xcel Energy uses these).
+
+        Uses the `holidays` library's US federal holiday set, which handles
+        observation rules (e.g., Jan 1 falling on a Sunday observed Monday).
+        The `holiday_config` parameter is retained for backwards compatibility
+        but is not currently used.
+        """
+        us_holidays = holidays_lib.country_holidays("US")
+        return date in us_holidays
     
     def get_all_current_rates(self, time: datetime, tariff_data: Dict[str, Any]) -> Dict[str, Any]:
         """Get all current Xcel Energy rates and charges."""
@@ -1080,8 +1081,7 @@ class XcelEnergyDataSource(ProviderDataSource):
                     },
                     "fixed_charges": {"monthly_service": 13.13},  # Schedule R base charge
                     "tou_schedule": {
-                        "peak": {"start": 15, "end": 19},  # 3 PM - 7 PM weekdays
-                        "shoulder": {"start": 13, "end": 15}  # 1 PM - 3 PM weekdays
+                        "peak": {"start": 17, "end": 21},  # 5 PM - 9 PM weekdays year-round (effective 2025-11-01)
                     },
                     "season_definitions": {
                         "summer": [6, 7, 8, 9],

@@ -6,6 +6,6 @@
   "dependencies": [],
   "documentation": "https://github.com/yourusername/ha-utility-tariff",  "issue_tracker": "https://github.com/yourusername/ha-utility-tariff/issues",
   "iot_class": "cloud_polling",
-  "requirements": ["pypdf2==3.0.1", "aiofiles>=23.0.0", "beautifulsoup4==4.12.2"],
+  "requirements": ["pypdf2==3.0.1", "aiofiles>=23.0.0", "beautifulsoup4==4.12.2", "holidays>=0.45"],
   "version": "0.1.3"
 }
