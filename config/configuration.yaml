@@ -1,0 +1,10 @@
+# Minimal Home Assistant configuration for development/testing.
+# The utility_tariff integration uses config_flow, so add it through the UI:
+# Settings > Devices & Services > Add Integration > search "Utility Tariff"
+
+default_config:
+
+logger:
+  default: info
+  logs:
+    custom_components.utility_tariff: debug
