@@ -72,9 +72,16 @@ class GenericTariffManager:
         except Exception as e:
             _LOGGER.debug("Could not load cache: %s", e)
         
+        # Pre-load any provider data needed for async-safe operation
+        if hasattr(self.provider.data_source, "async_load_sources_metadata"):
+            try:
+                await self.provider.data_source.async_load_sources_metadata(self.hass)
+            except Exception as e:
+                _LOGGER.debug("Could not pre-load provider source metadata: %s", e)
+
         # If no cache, use fallback rates immediately
         try:
-            fallback_data = self._provider_manager._get_fallback_rates()
+            fallback_data = self._get_fallback_rates()
             if fallback_data:
                 self._tariff_data = fallback_data
                 self._tariff_data["data_source"] = "fallback_startup"

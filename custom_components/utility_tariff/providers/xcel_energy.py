@@ -902,7 +902,7 @@ class XcelEnergyRateCalculator(ProviderRateCalculator):
 
 class XcelEnergyDataSource(ProviderDataSource):
     """Xcel Energy data source configuration."""
-    
+
     BASE_URL = "https://www.xcelenergy.com"
     STATIC_FILES_URL = "https://www.xcelenergy.com/staticfiles/xe-responsive/Company/Rates%20&%20Regulations/"
     RATE_BOOKS_URL = "https://www.xcelenergy.com/company/rates_and_regulations/rates/rate_books"
@@ -939,43 +939,52 @@ class XcelEnergyDataSource(ProviderDataSource):
         "TX": f"{STATIC_FILES_URL}SPS_TX_Electric_Entire_Tariff.pdf",  # Southwestern Public Service - Texas
         "WI": f"{STATIC_FILES_URL}NSP_WI_Electric_Entire_Tariff.pdf",  # Northern States Power - Wisconsin
     }
-    
+
+    def __init__(self):
+        super().__init__()
+        self._sources_metadata: Optional[Dict[str, Any]] = None
+
+    async def async_load_sources_metadata(self, hass) -> None:
+        """Load sources.json off the event loop and cache the result."""
+        if self._sources_metadata is not None:
+            return
+        metadata_file = Path(__file__).parent.parent / "sources.json"
+
+        def _read() -> Optional[Dict[str, Any]]:
+            if not metadata_file.exists():
+                return None
+            with open(metadata_file, "r") as f:
+                return json.load(f)
+
+        try:
+            self._sources_metadata = await hass.async_add_executor_job(_read) or {}
+        except Exception as e:
+            _LOGGER.warning("Error loading sources.json: %s", e)
+            self._sources_metadata = {}
+
     def get_source_config(self, state: str, service_type: str, rate_schedule: str) -> Dict[str, Any]:
         """Get PDF URL configuration for Xcel Energy.
-        
+
         Prioritizes sources.json URLs, then rate summary PDFs which are regularly updated and more focused.
         Falls back to full tariff PDFs if summaries are not available.
         """
-        # First check sources.json for URL sources
-        try:
-            # Get the path to the component directory
-            current_file = Path(__file__)
-            component_dir = current_file.parent.parent
-            
-            # Read sources metadata
-            metadata_file = component_dir / "sources.json"
-            if metadata_file.exists():
-                with open(metadata_file, "r") as f:
-                    metadata = json.load(f)
-                
-                # Get entries from sources.json
-                if "providers" in metadata:
-                    pdf_entries = metadata.get("providers", {}).get("xcel_energy", {}).get(service_type, [])
-                    
-                    if isinstance(pdf_entries, list) and pdf_entries:
-                        # Look for URL sources
-                        for entry in pdf_entries:
-                            source = entry.get("source", "")
-                            if source.startswith(("http://", "https://")):
-                                _LOGGER.info("Using URL from sources.json: %s", source)
-                                return {
-                                    "url": source,
-                                    "type": "pdf",
-                                    "is_summary": True,
-                                    "note": "Using URL from sources.json"
-                                }
-        except Exception as e:
-            _LOGGER.warning("Error reading sources.json: %s", e)
+        # Check sources.json (populated via async_load_sources_metadata; skipped if not pre-warmed)
+        metadata = self._sources_metadata
+        if metadata is None:
+            _LOGGER.debug("sources.json cache not warmed; skipping in favor of static URLs")
+        elif "providers" in metadata:
+            pdf_entries = metadata.get("providers", {}).get("xcel_energy", {}).get(service_type, [])
+            if isinstance(pdf_entries, list) and pdf_entries:
+                for entry in pdf_entries:
+                    source = entry.get("source", "")
+                    if source.startswith(("http://", "https://")):
+                        _LOGGER.info("Using URL from sources.json: %s", source)
+                        return {
+                            "url": source,
+                            "type": "pdf",
+                            "is_summary": True,
+                            "note": "Using URL from sources.json",
+                        }
         
         # Fall back to static rate summary from our static list
         summary_urls = self.RATE_SUMMARY_URLS.get(service_type, [])
