@@ -260,47 +260,51 @@ class DynamicCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("Non-TOU rate schedule, skipping next period calculation")
             return {"available": False}
         
-        # For weekends/holidays, next change is Monday morning
+        # Schedule (Xcel CO effective 2025-11-01): peak 17-21 weekdays only, off-peak otherwise.
+        tou_schedule = tariff_data.get("tou_schedule", {})
+        peak_start = tou_schedule.get("peak", {}).get("start", 17)
+        peak_end = tou_schedule.get("peak", {}).get("end", 21)
+        shoulder = tou_schedule.get("shoulder")
+        shoulder_start = shoulder.get("start") if shoulder else None
+        first_hour = shoulder_start if shoulder_start is not None else peak_start
+        first_period = "shoulder" if shoulder_start is not None else "peak"
+
+        # For weekends/holidays, next change is the first transition on the next billing weekday.
         if now.weekday() >= 5 or self.tariff_manager.is_holiday(now.date()):
-            days_until_monday = (7 - now.weekday()) % 7
-            if days_until_monday == 0:
-                days_until_monday = 7
-            next_change = now.replace(hour=0, minute=0, second=0) + timedelta(days=days_until_monday)
+            next_day = now + timedelta(days=1)
+            while next_day.weekday() >= 5 or self.tariff_manager.is_holiday(next_day.date()):
+                next_day = next_day + timedelta(days=1)
+            next_change = next_day.replace(hour=first_hour, minute=0, second=0, microsecond=0)
             return {
                 "available": True,
                 "next_change": next_change.isoformat(),
-                "next_period": "off-peak",
+                "next_period": first_period,
                 "minutes_until": int((next_change - now).total_seconds() / 60),
             }
-        
-        # For weekdays, calculate based on TOU schedule
-        tou_schedule = tariff_data.get("tou_schedule", {})
-        schedule_times = {
-            "shoulder_start": tou_schedule.get("shoulder", {}).get("start", 13),  # 1 PM default
-            "peak_start": tou_schedule.get("peak", {}).get("start", 15),      # 3 PM default
-            "peak_end": tou_schedule.get("peak", {}).get("end", 19),        # 7 PM default
-        }
-        
+
         current_hour = now.hour
-        
-        if current_hour < schedule_times["shoulder_start"]:
-            # Currently off-peak, next is shoulder
-            next_change = now.replace(hour=schedule_times["shoulder_start"], minute=0, second=0)
+
+        if shoulder_start is not None and current_hour < shoulder_start:
+            next_change = now.replace(hour=shoulder_start, minute=0, second=0, microsecond=0)
             next_period = "shoulder"
-        elif current_hour < schedule_times["peak_start"]:
-            # Currently shoulder, next is peak
-            next_change = now.replace(hour=schedule_times["peak_start"], minute=0, second=0)
+        elif shoulder_start is not None and current_hour < peak_start:
+            next_change = now.replace(hour=peak_start, minute=0, second=0, microsecond=0)
             next_period = "peak"
-        elif current_hour < schedule_times["peak_end"]:
+        elif current_hour < peak_start:
+            # Currently off-peak, next is peak
+            next_change = now.replace(hour=peak_start, minute=0, second=0, microsecond=0)
+            next_period = "peak"
+        elif current_hour < peak_end:
             # Currently peak, next is off-peak
-            next_change = now.replace(hour=schedule_times["peak_end"], minute=0, second=0)
+            next_change = now.replace(hour=peak_end, minute=0, second=0, microsecond=0)
             next_period = "off-peak"
         else:
-            # Currently off-peak evening, next change is tomorrow
-            next_change = (now + timedelta(days=1)).replace(
-                hour=schedule_times["shoulder_start"], minute=0, second=0
-            )
-            next_period = "shoulder"
+            # Currently off-peak evening, next change is tomorrow's first transition.
+            tomorrow = now + timedelta(days=1)
+            while tomorrow.weekday() >= 5 or self.tariff_manager.is_holiday(tomorrow.date()):
+                tomorrow = tomorrow + timedelta(days=1)
+            next_change = tomorrow.replace(hour=first_hour, minute=0, second=0, microsecond=0)
+            next_period = first_period
         
         return {
             "available": True,
